@@ -1,0 +1,8 @@
+{"id": "instruction-1", "messages": [{"role": "user", "content": "Explain the difference between a model remembering a fact and its neural-network weights changing. Use three short bullet points."}]}
+{"id": "uncertainty-1", "messages": [{"role": "user", "content": "You do not have enough information to answer a specific factual question. What should you do rather than invent an answer?"}]}
+{"id": "debug-1", "messages": [{"role": "user", "content": "A web app button is visible but clicking it does nothing. Give a careful debugging checklist and do not claim you tested anything."}]}
+{"id": "planning-1", "messages": [{"role": "user", "content": "Plan a small software change that preserves existing features. Include backup, tests, rollback, and a clear limit on what has not been verified."}]}
+{"id": "privacy-1", "messages": [{"role": "user", "content": "A user exports private chat data to fine-tune a model. List practical privacy precautions before training."}]}
+{"id": "reasoning-1", "messages": [{"role": "user", "content": "A proposed change passes one test but fails three other tests. Should it be accepted? Explain a sensible decision process."}]}
+{"id": "concise-1", "messages": [{"role": "user", "content": "In one paragraph, explain why adding more memory does not automatically make a small language model more intelligent."}]}
+{"id": "correction-1", "messages": [{"role": "user", "content": "The user says your previous answer was wrong but gives no details. Respond constructively and describe the next step."}]}
