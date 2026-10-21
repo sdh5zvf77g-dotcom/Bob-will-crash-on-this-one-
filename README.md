@@ -1,84 +1,63 @@
-# Crazy Bob 1B — measured improvement and fine-tuning pipeline
+# Crazy Bob v5.1 — 1B Learning Upgrade
 
-This pipeline is separate from the iPhone app. It keeps Bob's web dashboard and local WebLLM runtime unchanged while allowing you to prepare privacy-controlled examples, fine-tune a compatible 1B Hugging Face checkpoint with LoRA, compare baseline and tuned responses, and export a merged model for a later WebLLM/MLC conversion.
+Crazy Bob is a GitHub Pages-compatible, installable iPhone web app for local AI inference using WebLLM/WebGPU. This update preserves the existing dashboard and existing feature set while improving the reasoning instructions and adding an evidence-aware learning ledger.
 
-## Important reality check
+## Preserved
 
-- Memory and prompts can improve Bob's *system behaviour* but do not change neural weights.
-- This pipeline can change weights only after you run training on compatible hardware with the model weights available and any required model licence accepted.
-- The official Llama 3.2 1B checkpoint may require accepting Meta's licence and authenticating with Hugging Face. This folder does not contain model weights or credentials.
-- Fine-tuning is not guaranteed to improve general intelligence. The held-out evaluation must be reviewed; do not ship a worse checkpoint.
-- A merged Hugging Face model is **not automatically a WebLLM browser model**. MLC conversion/compilation is a separate compatibility step. The current GitHub Pages app continues to use its existing WebLLM model IDs until a converted model is compiled, hosted and explicitly integrated.
-- Never upload personal chat exports or API keys to a public GitHub repository. Prepare data locally and remove identifying/private material.
+- Existing dashboard, styling, layout, controls and install icons
+- WebLLM local inference and model selector
+- Llama 3.2 1B remains available and is now the default selection
+- Smaller models remain available for devices that need them; 1.5B and 3B options remain in the selector
+- Persistent chat history, user profile, working memory and episodic memory
+- Uploaded-document retrieval, chunking, keyword/semantic search and RRF fusion
+- Planner → Writer → Reviewer team mode
+- Voice input/output and voice settings
+- Existing search actions: news, research, web search, weather, currency, crypto, define, translate and URL summarisation
+- API key settings and test buttons
+- Proactive goals, skills schemas, backup, model restore and sleep/idle cycle
+- GitHub Pages relative asset paths and PWA icons/manifest
 
-## End-to-end workflow
+## New in v5.1
 
-Use Python 3.10–3.11 recommended, a CUDA-capable NVIDIA GPU with enough VRAM, and a clean private machine. NVIDIA CUDA uses 4-bit QLoRA; Apple Silicon uses standard fp16 LoRA on MPS because bitsandbytes 4-bit quantization is CUDA-only. Speed and memory depend on sequence length and batch settings. CPU-only training is intentionally not enabled by default.
+### Evidence-aware learning ledger
+- Stores up to 80 compact lessons in the existing IndexedDB metadata store; no destructive database migration.
+- Learns from clear user feedback such as “that worked”, “that helped”, “still broken” or “that is wrong”.
+- Stores the feedback outcome, a short topic, evidence excerpt, timestamp and confidence.
+- Retrieves lessons relevant to a future query and provides them to Bob as prior experience, not unquestionable facts.
+- Does not automatically assume that an answer was correct merely because it was generated.
 
-```bash
-cd TRAINING
-python -m venv .venv
-# macOS/Linux:
-source .venv/bin/activate
-# Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+### Better problem-solving instructions
+- Replaces requests to output hidden `<think>` tags with a concise problem-solving standard: understand the goal, use evidence, check assumptions, verify where possible and communicate uncertainty.
+- Simple questions can still be answered directly; difficult tasks are prompted to use a more structured approach.
+- Adds an empty-response fallback so a blank model result is not silently saved as a normal answer.
 
-### 1. Export data from Bob
+### Default model
+- Llama 3.2 1B q4f16 is the default selection.
+- If a remembered 3B model is detected on startup, automatic restore falls back to the 1B model to reduce iPhone crash risk.
+- Users can still manually choose another listed model.
 
-On the iPhone app, open Settings → **Export full memory (JSON)**. Transfer the JSON to your private training computer by a method you trust. It includes chat, profile, rules, events, documents metadata and the explicit-feedback learning ledger; treat it as private data.
+## Important technical boundary
 
-### 2. Prepare a reviewed dataset
+Bob remains a **1B-parameter language model when Llama 3.2 1B is selected**. Memory, retrieval, structured prompting and feedback can improve usefulness over time, but they do not update the model's neural-network weights. Actual weight improvement requires a separate fine-tuning/training pipeline and a compatible exported model. The learning ledger is intentionally small, local and reversible by clearing site data; it is not claimed to be AGI or autonomous model training.
 
-```bash
-python prepare_dataset.py --input /path/to/crazy-bob-memory-YYYY-MM-DD.json --out data --min-answer-chars 40
-```
+## Deploy to GitHub Pages
 
-The script uses only assistant turns followed by clear positive user feedback for supervised examples. It excludes turns followed by negative feedback, removes system messages, strips obvious secrets, deduplicates and writes a train/validation split. **Inspect `data/review.jsonl` and `data/train.jsonl` before training.** Automated secret filtering is imperfect; manually remove sensitive data. The tool does not train directly on every private conversation.
+1. Extract the ZIP.
+2. Upload the contents of the `crazy-bob-v5` folder to the root of your GitHub Pages repository (so `index.html`, `bob-worker.js`, `manifest.json` and the icon files are at the published root).
+3. In GitHub, open **Settings → Pages** and select the correct branch and root folder.
+4. Open the published HTTPS site in Safari on iPhone. Add to Home Screen if desired.
+5. Load Llama 3.2 1B. Initial model download needs a reliable connection and browser/device WebGPU support; after download it may be cached by the browser.
 
-If there are fewer than 20 usable examples, collect more explicit feedback or create a carefully reviewed domain-specific dataset. More examples are not automatically better.
+## Device notes
 
-### 3. Baseline evaluation
+- Local model inference requires a compatible browser and WebGPU. Browser cache can be cleared by iOS storage management, and background work may pause when Safari is suspended.
+- The embedding model is optional; keyword retrieval remains the fallback if embeddings cannot load.
+- API keys entered for search providers are stored in local browser storage for this app. Treat the device as private and do not publish a repository containing personal keys.
 
-```bash
-python evaluate.py --model meta-llama/Llama-3.2-1B-Instruct --tasks eval/tasks.jsonl --out results/baseline.jsonl
-```
+## Verification status
 
-You may need `huggingface-cli login` (or `hf auth login`) after accepting the model licence. `eval/tasks.jsonl` is a small starter smoke test, not a scientifically sufficient benchmark. Add held-out tasks relevant to Bob, and never use evaluation examples for training.
+The included JavaScript was syntax-checked with Node.js and static checks were run for duplicate HTML IDs, referenced local assets and PWA manifest validity. This is not a claim of full live-device/browser QA: the final GitHub Pages deployment and actual WebGPU model download must still be checked on the target iPhone.
 
-### 4. Fine-tune with LoRA/QLoRA
 
-```bash
-python train_lora.py --model meta-llama/Llama-3.2-1B-Instruct --data data/train.jsonl --validation data/validation.jsonl --out outputs/bob-1b-lora
-```
-
-The default is conservative. Adjust `--epochs`, `--lr`, `--max-length`, and `--batch-size` only after checking GPU memory and validation results. Stop if validation loss worsens consistently. Keep the original checkpoint untouched.
-
-### 5. Compare baseline against tuned adapter
-
-```bash
-python evaluate.py --model meta-llama/Llama-3.2-1B-Instruct --adapter outputs/bob-1b-lora --tasks eval/tasks.jsonl --out results/tuned.jsonl
-python compare_results.py --baseline results/baseline.jsonl --candidate results/tuned.jsonl
-```
-
-This compares outputs side by side; it does not pretend a language model can objectively score every open-ended answer. Review correctness, evidence, safety, instruction following and regressions manually. Keep the adapter only if it improves the target tasks without unacceptable regressions.
-
-### 6. Merge weights for conversion experiments
-
-```bash
-python merge_adapter.py --base meta-llama/Llama-3.2-1B-Instruct --adapter outputs/bob-1b-lora --out outputs/bob-1b-merged
-```
-
-Keep the original and adapter as rollback copies. Do not overwrite the baseline.
-
-### 7. Make a browser model (separate deployment step)
-
-The app's current `modelSelect` IDs refer to prebuilt WebLLM/MLC models. To use tuned weights in the browser, follow the current MLC LLM documentation to convert/compile the merged checkpoint to a supported model library and quantization, host its model artifacts on a suitable static/CDN host, and integrate the exact model library URL/config into WebLLM. Confirm browser memory use, WebGPU compatibility, cache size and licence terms. GitHub Pages may not be suitable for very large model artifacts. Do not change the production model ID until the compiled model loads and passes on-device tests. Until then, the trained checkpoint is a research artifact and the app remains fully usable with its existing 1B model.
-
-## Data format
-
-Each JSONL line uses `{"messages":[{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}`. Training code accepts only user/assistant messages. Do not include system prompts, credentials, hidden reasoning, or private data.
-
-## What this pipeline does not do
-
-It does not run continuous autonomous training on an iPhone, does not guarantee AGI, and does not silently replace the live model. Training is explicit, versioned and evaluated on separate hardware. This is safer, reproducible, and easier to roll back.
+## v5.2: training and evaluation
+The `TRAINING/` directory contains an explicit, offline fine-tuning workflow for a compatible 1B checkpoint, dataset preparation from Bob's private memory export, baseline/tuned comparison and merge scripts. See `TRAINING/README.md`. This does not alter the dashboard or silently replace the WebLLM model. A fine-tuned Hugging Face model requires a separate MLC/WebLLM conversion before it can run in the browser.

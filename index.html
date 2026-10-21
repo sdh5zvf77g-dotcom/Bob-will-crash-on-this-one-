@@ -2728,9 +2728,9 @@ Suggest a corrected input or a short alternative approach the user can try. Be c
       };
     }
 
-    // News via multiple RSS feeds through CORS proxy
+    // News: resilient RSS reader with multiple public gateways and partial-success handling.
+    // Public RSS feeds commonly block browser cross-origin requests; try several gateways.
     async function fetchNews() {
-      // Free CORS-friendly RSS→JSON gateway (allorigins/corsproxy broke)
       const feeds = [
         { name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
         { name: "The Guardian", url: "https://www.theguardian.com/world/rss" },
@@ -2740,55 +2740,93 @@ Suggest a corrected input or a short alternative approach the user can try. Be c
       const allItems = [];
       const errors = [];
 
-      await Promise.all(feeds.map(async (feed) => {
-        try {
-          const api = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.url)}`;
-          const res = await fetchWithTimeout(api, {
-            headers: { "Accept": "application/json" }
-          }, 12000);
-          if (!res.ok) {
-            errors.push(`${feed.name}: HTTP ${res.status}`);
-            return;
-          }
-          const data = await res.json();
-          if (data.status !== "ok" || !Array.isArray(data.items)) {
-            errors.push(`${feed.name}: ${data.message || "bad response"}`);
-            return;
-          }
-          for (const item of data.items.slice(0, 4)) {
-            const title = (item.title || "").replace(/<[^>]+>/g, "").trim();
-            if (!title) continue;
-            allItems.push({
-              source: feed.name,
-              title,
-              description: (item.description || item.content || "")
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim()
-                .slice(0, 200),
-              link: (item.link || item.url || "").trim(),
-              pubDate: item.pubDate || ""
-            });
-          }
-        } catch (err) {
-          errors.push(`${feed.name}: ${err.message || err}`);
+      function cleanText(value) {
+        const el = document.createElement("div");
+        el.innerHTML = value || "";
+        return (el.textContent || el.innerText || "").replace(/\s+/g, " ").trim();
+      }
+      function parseRss(xmlText, sourceName) {
+        const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+        if (doc.querySelector("parsererror")) throw new Error("Invalid RSS/XML response");
+        const nodes = Array.from(doc.querySelectorAll("item, entry"));
+        return nodes.slice(0, 6).map(node => {
+          const get = name => node.getElementsByTagName(name)[0]?.textContent?.trim() || "";
+          const linkNode = node.getElementsByTagName("link")[0];
+          const link = linkNode?.textContent?.trim() || linkNode?.getAttribute("href") || "";
+          return {
+            source: sourceName,
+            title: cleanText(get("title")),
+            description: cleanText(get("description") || get("summary") || get("content")).slice(0, 240),
+            link: link,
+            pubDate: get("pubDate") || get("published") || get("updated") || ""
+          };
+        }).filter(item => item.title);
+      }
+      async function tryJsonGateway(feed) {
+        const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.url)}`;
+        const res = await fetchWithTimeout(url, { headers: { "Accept": "application/json" } }, 10000);
+        if (!res.ok) throw new Error(`rss2json HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.status !== "ok" || !Array.isArray(data.items)) throw new Error(data.message || "rss2json returned no items");
+        return data.items.slice(0, 6).map(item => ({
+          source: feed.name,
+          title: cleanText(item.title),
+          description: cleanText(item.description || item.content).slice(0, 240),
+          link: (item.link || item.url || "").trim(),
+          pubDate: item.pubDate || ""
+        })).filter(item => item.title);
+      }
+      async function tryRawGateway(feed, gateway) {
+        let proxyUrl;
+        if (gateway === "allorigins") proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feed.url)}`;
+        else if (gateway === "corsproxy") proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(feed.url)}`;
+        else proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(feed.url)}`;
+        const res = await fetchWithTimeout(proxyUrl, { headers: { "Accept": "application/xml,text/xml,text/plain,*/*" } }, 10000);
+        if (!res.ok) throw new Error(`${gateway} HTTP ${res.status}`);
+        const body = await res.text();
+        if (!body || !/<(?:rss|feed|rdf:RDF)\b/i.test(body)) throw new Error(`${gateway} returned no RSS`);
+        return parseRss(body, feed.name);
+      }
+      await Promise.all(feeds.map(async feed => {
+        const attempts = [
+          () => tryJsonGateway(feed),
+          () => tryRawGateway(feed, "allorigins"),
+          () => tryRawGateway(feed, "corsproxy"),
+          () => tryRawGateway(feed, "codetabs")
+        ];
+        let lastError = "Unknown error";
+        for (const attempt of attempts) {
+          try {
+            const items = await attempt();
+            if (items.length) { allItems.push(...items); return; }
+            lastError = "No headlines returned";
+          } catch (err) { lastError = err?.message || String(err); }
         }
+        errors.push(`${feed.name}: ${lastError}`);
       }));
 
-      // Deduplicate similar titles
       const seen = new Set();
       const unique = [];
-      for (const it of allItems) {
-        const key = it.title.toLowerCase().slice(0, 60);
-        if (seen.has(key)) continue;
+      for (const item of allItems) {
+        const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 70);
+        if (!key || seen.has(key)) continue;
         seen.add(key);
-        unique.push(it);
+        unique.push(item);
       }
-
-      if (unique.length === 0) {
-        throw new Error(errors.length ? errors.join("; ") : "No headlines from any feed");
+      if (!unique.length) {
+        // A short-lived cache lets Bob show recently fetched headlines during a temporary outage,
+        // but it is explicitly labelled as cached rather than live.
+        try {
+          const cached = JSON.parse(localStorage.getItem("crazyBobNewsCache") || "null");
+          if (cached?.items?.length && Date.now() - cached.savedAt < 6 * 60 * 60 * 1000) {
+            return cached.items.map(item => ({ ...item, source: `${item.source} (cached)` }));
+          }
+        } catch (_) {}
+        throw new Error("All news gateways failed. Check your connection or try again later. " + errors.join("; "));
       }
-      return unique.slice(0, 14);
+      const result = unique.slice(0, 18);
+      try { localStorage.setItem("crazyBobNewsCache", JSON.stringify({ savedAt: Date.now(), items: result })); } catch (_) {}
+      return result;
     }
 
     // Serper.dev Google search (optional key)
